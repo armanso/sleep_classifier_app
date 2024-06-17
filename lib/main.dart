@@ -2,9 +2,14 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:sleep_classifier_app/sensor_data.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:tflite_flutter/tflite_flutter.dart' as tfl;
 import 'package:file_picker/file_picker.dart';
+
+import 'package:flutter_wear_os_connectivity/flutter_wear_os_connectivity.dart';
 
 const String modelFile = 'assets/best-mo-walch-no-4018081.tflite';
 const int inputWidth = 15360;
@@ -52,6 +57,9 @@ class _SleepClassifierState extends State<SleepClassifier> {
   static const String _baseTitle = 'Sleep Wake Classifier';
   String _title = _baseTitle;
 
+  List<String> resultCache = [];
+  List<String> result = [];
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -63,14 +71,106 @@ class _SleepClassifierState extends State<SleepClassifier> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             ElevatedButton(
+              onPressed: deviceName != null ? _connectDevice : null,
+              child: Text(deviceName != null
+                  ? "${deviceName!.name}(${deviceName!.id})"
+                  : "Loading ..."),
+            ),
+            ElevatedButton(
+              onPressed: shareCsvFile,
+              child: const Text("Download CSV"),
+            ),
+            ElevatedButton(
               onPressed: _pickCSV,
               child: const Text('Select Spectrogram CSV File'),
             ),
+            const SizedBox(height: 20),
+            ...resultCache.map((item) => Text(item)),
+            const SizedBox(height: 20),
+            ...result.map((item) => Text(item)),
             const SizedBox(height: 20),
             _csvDataHeatMap(),
             _hypnogram()
           ],
         )));
+  }
+
+  Future<void> _connectDevice() async {
+    resultCache.add("Connected to ${deviceName!.name}(${deviceName!.id})");
+    resultCache.add("requesting to get not synced items");
+
+    setState(() {
+      resultCache = resultCache;
+    });
+
+    _flutterWearOsConnectivity.getAllDataItems().listen((items) async {
+      List<SensorData> sensorDataList = [];
+
+      for (var item in items) {
+        for (var value in item.mapData.values) {
+          final sensorData = SensorData.fromJsonList(value);
+          sensorDataList.addAll(sensorData);
+        }
+
+        _flutterWearOsConnectivity.deleteDataItems(uri: item.pathURI);
+      }
+
+      resultCache.add("Not Synced data: ${sensorDataList.length}");
+      setState(() {
+        resultCache = resultCache;
+      });
+      String filePath = await getFilePath();
+      appendSensorDataToCsv(sensorDataList, filePath);
+    });
+
+    _flutterWearOsConnectivity.dataChanged().listen((items) async {
+      List<SensorData> sensorDataList = [];
+
+      result.clear();
+
+      for (var each in items) {
+        for (var value in each.dataItem.mapData.values) {
+          final sensorData = SensorData.fromJsonList(value);
+          sensorDataList.addAll(sensorData);
+        }
+        _flutterWearOsConnectivity.deleteDataItems(uri: each.dataItem.pathURI);
+      }
+
+      result.add("Realtime data: ${sensorDataList.length}");
+      setState(() {
+        result = result;
+      });
+
+      String filePath = await getFilePath();
+      appendSensorDataToCsv(sensorDataList, filePath);
+    });
+  }
+
+  Future<void> shareCsvFile() async {
+    String filePath = await getFilePath();
+    Share.shareXFiles([XFile(filePath)]);
+  }
+
+  Future<String> getFilePath() async {
+    final directory = await getApplicationDocumentsDirectory();
+    return '${directory.path}/sensor_data.csv';
+  }
+
+  Future<void> appendSensorDataToCsv(
+      List<SensorData> sensorDataList, String filePath) async {
+    final file = File(filePath);
+    final sink = file.openWrite(mode: FileMode.append);
+
+    if (!await file.exists()) {
+      await file.writeAsString('ID,Value,Timestamp\n', mode: FileMode.append);
+    }
+
+    for (var sensorData in sensorDataList) {
+      sink.writeln(sensorData.toCsvRow());
+    }
+
+    await sink.close();
+    print('CSV file appended at $filePath');
   }
 
   // Function to pick a CSV file
@@ -135,10 +235,23 @@ class _SleepClassifierState extends State<SleepClassifier> {
     });
   }
 
+  WearOsDevice? deviceName;
+  late FlutterWearOsConnectivity _flutterWearOsConnectivity;
+
   @override
   void initState() {
     super.initState();
     _loadModel();
+
+    _flutterWearOsConnectivity = FlutterWearOsConnectivity();
+
+    _flutterWearOsConnectivity.configureWearableAPI().then((ss) {
+      _flutterWearOsConnectivity.getConnectedDevices().then((devices) {
+        setState(() {
+          deviceName = devices.firstOrNull;
+        });
+      });
+    });
   }
 
   @override

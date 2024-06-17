@@ -12,6 +12,8 @@ if (localPropertiesFile.exists()) {
     }
 }
 
+ext.kotlin_version = '1.8.0'
+
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
 if (flutterVersionCode == null) {
     flutterVersionCode = '1'
@@ -64,4 +66,6 @@ flutter {
     source '../..'
 }
 
-dependencies {}
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+}
