@@ -38,6 +38,13 @@ class SleepClassifier extends StatefulWidget {
   State<SleepClassifier> createState() => _SleepClassifierState();
 }
 
+class WearOsStatus {
+  int count = 0;
+  String status = "";
+
+  WearOsStatus(this.count, this.status);
+}
+
 class _SleepClassifierState extends State<SleepClassifier> {
   late tfl.Interpreter _interpreter;
   List<List<double>> _csvData = [];
@@ -57,8 +64,8 @@ class _SleepClassifierState extends State<SleepClassifier> {
   static const String _baseTitle = 'Sleep Wake Classifier';
   String _title = _baseTitle;
 
-  List<String> resultCache = [];
-  List<String> result = [];
+  List<String> status = [];
+  Map<String, WearOsStatus> map = {};
 
   @override
   Widget build(BuildContext context) {
@@ -67,41 +74,49 @@ class _SleepClassifierState extends State<SleepClassifier> {
           title: Text(_title),
         ),
         body: Center(
-            child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton(
-              onPressed: deviceName != null ? _connectDevice : null,
-              child: Text(deviceName != null
-                  ? "${deviceName!.name}(${deviceName!.id})"
-                  : "Loading ..."),
-            ),
-            ElevatedButton(
-              onPressed: shareCsvFile,
-              child: const Text("Download CSV"),
-            ),
-            ElevatedButton(
-              onPressed: _pickCSV,
-              child: const Text('Select Spectrogram CSV File'),
-            ),
-            const SizedBox(height: 20),
-            ...resultCache.map((item) => Text(item)),
-            const SizedBox(height: 20),
-            ...result.map((item) => Text(item)),
-            const SizedBox(height: 20),
-            _csvDataHeatMap(),
-            _hypnogram()
-          ],
+            child: Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              ElevatedButton(
+                onPressed: deviceName != null ? _connectDevice : null,
+                child: Text(deviceName != null
+                    ? "${deviceName!.name}(${deviceName!.id})"
+                    : "Loading ..."),
+              ),
+              ElevatedButton(
+                onPressed: shareCsvFile,
+                child: const Text("Download CSV"),
+              ),
+              ElevatedButton(
+                onPressed: _pickCSV,
+                child: const Text('Select Spectrogram CSV File'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  File(await getFilePath()).delete();
+                  status.add("csv file deleted");
+                  setState(() {
+                    status = status;
+                  });
+                },
+                child: const Text("Delete CSV file"),
+              ),
+              const SizedBox(height: 20),
+              ...status.map((item) => Text(item)),
+              const SizedBox(height: 20),
+              ...map.values.toList().map((item) => Text(item.status)),
+              const SizedBox(height: 20),
+              _csvDataHeatMap(),
+              _hypnogram()
+            ],
+          ),
         )));
   }
 
   Future<void> _connectDevice() async {
-    resultCache.add("Connected to ${deviceName!.name}(${deviceName!.id})");
-    resultCache.add("requesting to get not synced items");
-
-    setState(() {
-      resultCache = resultCache;
-    });
+    status.add("Connected to ${deviceName!.name}(${deviceName!.id})");
+    status.add("requesting to get not synced items");
 
     _flutterWearOsConnectivity.getAllDataItems().listen((items) async {
       List<SensorData> sensorDataList = [];
@@ -115,18 +130,18 @@ class _SleepClassifierState extends State<SleepClassifier> {
         _flutterWearOsConnectivity.deleteDataItems(uri: item.pathURI);
       }
 
-      resultCache.add("Not Synced data: ${sensorDataList.length}");
+      final key = getRandomString(10);
+
       setState(() {
-        resultCache = resultCache;
+        map[key] = WearOsStatus(sensorDataList.length,
+            "${sensorDataList.length} item received from cache, saving them into csv ...");
       });
       String filePath = await getFilePath();
-      appendSensorDataToCsv(sensorDataList, filePath);
+      appendSensorDataToCsv(sensorDataList, filePath, key);
     });
 
     _flutterWearOsConnectivity.dataChanged().listen((items) async {
       List<SensorData> sensorDataList = [];
-
-      result.clear();
 
       for (var each in items) {
         for (var value in each.dataItem.mapData.values) {
@@ -135,14 +150,15 @@ class _SleepClassifierState extends State<SleepClassifier> {
         }
         _flutterWearOsConnectivity.deleteDataItems(uri: each.dataItem.pathURI);
       }
+      final key = getRandomString(10);
 
-      result.add("Realtime data: ${sensorDataList.length}");
       setState(() {
-        result = result;
+        map[key] = WearOsStatus(sensorDataList.length,
+            "${sensorDataList.length} item received directly from watch, saving them into csv ...");
       });
 
       String filePath = await getFilePath();
-      appendSensorDataToCsv(sensorDataList, filePath);
+      appendSensorDataToCsv(sensorDataList, filePath, key);
     });
   }
 
@@ -157,20 +173,32 @@ class _SleepClassifierState extends State<SleepClassifier> {
   }
 
   Future<void> appendSensorDataToCsv(
-      List<SensorData> sensorDataList, String filePath) async {
-    final file = File(filePath);
-    final sink = file.openWrite(mode: FileMode.append);
+      List<SensorData> sensorDataList, String filePath, String key) async {
+    try {
+      final file = File(filePath);
+      final sink = file.openWrite(mode: FileMode.append);
 
-    if (!await file.exists()) {
-      await file.writeAsString('ID,Value,Timestamp\n', mode: FileMode.append);
+      if (!await file.exists()) {
+        await file.writeAsString('unixTimestampMs, x, y, z\n',
+            mode: FileMode.append);
+      }
+
+      sink.writeln(
+          sensorDataList.map((sensorData) => sensorData.toCsvRow()).join("\n"));
+
+      await sink.close();
+      setState(() {
+        final value = map[key];
+        value?.status = "${sensorDataList.length} items Saved";
+        map[key] = value!;
+      });
+    } catch (e) {
+      setState(() {
+        final test = map[key];
+        test?.status = "Error ${e.toString()}";
+        map[key] = test!;
+      });
     }
-
-    for (var sensorData in sensorDataList) {
-      sink.writeln(sensorData.toCsvRow());
-    }
-
-    await sink.close();
-    print('CSV file appended at $filePath');
   }
 
   // Function to pick a CSV file
@@ -420,3 +448,9 @@ class _HeatmapWidgetState extends State<HeatmapWidget> {
     );
   }
 }
+
+const _chars = 'AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz1234567890';
+Random _rnd = Random();
+
+String getRandomString(int length) => String.fromCharCodes(Iterable.generate(
+    length, (_) => _chars.codeUnitAt(_rnd.nextInt(_chars.length))));
