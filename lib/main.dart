@@ -118,6 +118,10 @@ class _SleepClassifierState extends State<SleepClassifier> {
     status.add("Connected to ${deviceName!.name}(${deviceName!.id})");
     status.add("requesting to get not synced items");
 
+    setState(() {
+      status = status;
+    });
+
     _flutterWearOsConnectivity.getAllDataItems().listen((items) async {
       List<SensorData> sensorDataList = [];
 
@@ -176,12 +180,13 @@ class _SleepClassifierState extends State<SleepClassifier> {
       List<SensorData> sensorDataList, String filePath, String key) async {
     try {
       final file = File(filePath);
-      final sink = file.openWrite(mode: FileMode.append);
 
       if (!await file.exists()) {
         await file.writeAsString('unixTimestampMs, x, y, z\n',
             mode: FileMode.append);
       }
+
+      final sink = file.openWrite(mode: FileMode.append);
 
       sink.writeln(
           sensorDataList.map((sensorData) => sensorData.toCsvRow()).join("\n"));
